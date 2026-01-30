@@ -14,12 +14,18 @@ const JWT_SECRET = process.env.JWT_SECRET || 'fadestack-secret-key-2024';
 app.use(express.json());
 app.use(cors());
 
-// MongoDB Connection - Use cloud database with Render-compatible settings
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://krish321epsi_db_user:123456789kishore@cluster0.x4udcsa.mongodb.net/fadestack?retryWrites=true&w=majority&appName=fadestack';
+// MongoDB Connection - Use cloud database with multiple fallback options
+let MONGODB_URI = process.env.MONGODB_URI;
+
+// If no environment variable, try different connection strings for Render compatibility
+if (!MONGODB_URI) {
+    MONGODB_URI = 'mongodb+srv://krish321epsi_db_user:123456789kishore@cluster0.x4udcsa.mongodb.net/fadestack?retryWrites=true&w=majority&ssl=false&authSource=admin';
+}
 
 console.log('🔗 Connecting to MongoDB Atlas...');
 console.log('📝 Using MongoDB URI:', MONGODB_URI ? 'URI provided' : 'No URI provided');
 console.log('🌐 Environment:', process.env.NODE_ENV || 'development');
+console.log('🔧 Platform:', process.env.RENDER ? 'Render' : 'Local');
 
 // MongoDB connection options - simplified for Render compatibility
 const mongoOptions = {
@@ -145,6 +151,44 @@ async function safeDbOperation(operation, fallbackResponse = null) {
     }
 }
 
+// Test database connection endpoint
+app.get('/api/test/db', async (req, res) => {
+    try {
+        const connectionState = mongoose.connection.readyState;
+        const states = {
+            0: 'disconnected',
+            1: 'connected',
+            2: 'connecting',
+            3: 'disconnecting'
+        };
+        
+        let testResult = null;
+        if (connectionState === 1) {
+            try {
+                // Try a simple database operation
+                testResult = await User.countDocuments();
+            } catch (error) {
+                testResult = `Error: ${error.message}`;
+            }
+        }
+        
+        res.json({
+            status: 'ok',
+            database: {
+                state: connectionState,
+                stateText: states[connectionState],
+                userCount: testResult,
+                uri: process.env.MONGODB_URI ? 'Set' : 'Not set'
+            }
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            message: error.message
+        });
+    }
+});
+
 // Routes
 
 // Register
@@ -157,20 +201,20 @@ app.post('/api/auth/register', validateRegistration, async (req, res) => {
 
         const { name, username, email, password } = req.body;
 
-        // Check database connection
-        if (!checkDatabaseConnection()) {
-            return res.status(503).json({ 
-                message: 'Database temporarily unavailable. Please try again later.',
-                error: 'DB_CONNECTION_FAILED'
-            });
-        }
+        console.log('🔄 Registration attempt for:', email);
+        console.log('📊 Database connection state:', mongoose.connection.readyState);
 
-        // Check if user exists
-        const existingUser = await safeDbOperation(async () => {
-            return await User.findOne({
-                $or: [{ email }, { username }]
-            });
-        });
+        // Try to check if user exists (with timeout)
+        let existingUser = null;
+        try {
+            existingUser = await Promise.race([
+                User.findOne({ $or: [{ email }, { username }] }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Database timeout')), 5000))
+            ]);
+        } catch (dbError) {
+            console.log('⚠️ Database check failed:', dbError.message);
+            // Continue without checking - let duplicate key error handle it
+        }
 
         if (existingUser) {
             return res.status(400).json({ 
@@ -180,14 +224,53 @@ app.post('/api/auth/register', validateRegistration, async (req, res) => {
             });
         }
 
-        // Create user
-        const user = await safeDbOperation(async () => {
+        // Try to create user (with timeout)
+        let user;
+        try {
             const newUser = new User({ name, username, email, password });
-            return await newUser.save();
-        });
+            user = await Promise.race([
+                newUser.save(),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Database timeout')), 10000))
+            ]);
+            console.log('✅ User saved to database:', user._id);
+        } catch (dbError) {
+            console.error('❌ Database save failed:', dbError.message);
+            
+            // Handle duplicate key errors
+            if (dbError.code === 11000) {
+                const field = dbError.keyPattern?.email ? 'Email' : 'Username';
+                return res.status(400).json({ 
+                    message: `${field} already registered`
+                });
+            }
+            
+            return res.status(503).json({ 
+                message: 'Database temporarily unavailable. Please try again later.',
+                error: 'DB_SAVE_FAILED'
+            });
+        }
 
         // Generate token
         const token = user.generateAuthToken();
+
+        res.status(201).json({
+            message: 'Account created successfully!',
+            token,
+            user: {
+                id: user._id,
+                name: user.name,
+                username: user.username,
+                email: user.email
+            }
+        });
+    } catch (error) {
+        console.error('Registration error:', error);
+        res.status(500).json({ 
+            message: 'Server error during registration',
+            error: process.env.NODE_ENV === 'development' ? error.message : 'INTERNAL_ERROR'
+        });
+    }
+});
 
         res.status(201).json({
             message: 'Account created successfully!',
