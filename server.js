@@ -14,16 +14,25 @@ const JWT_SECRET = process.env.JWT_SECRET || 'fadestack-secret-key-2024';
 app.use(express.json());
 app.use(cors());
 
-// MongoDB Connection - Use cloud database
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://krish321epsi_db_user:123456789kishore@cluster0.x4udcsa.mongodb.net/fadestack?retryWrites=true&w=majority';
+// MongoDB Connection - Use cloud database with SSL configuration
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://krish321epsi_db_user:123456789kishore@cluster0.x4udcsa.mongodb.net/fadestack?retryWrites=true&w=majority&ssl=true&tlsAllowInvalidCertificates=true';
 
 console.log('🔗 Connecting to MongoDB Atlas...');
 console.log('📝 Using MongoDB URI:', MONGODB_URI ? 'Connected' : 'No URI provided');
 
-// MongoDB connection options
+// MongoDB connection options with SSL configuration
 const mongoOptions = {
-    serverSelectionTimeoutMS: 5000, // Keep trying to send operations for 5 seconds
+    serverSelectionTimeoutMS: 30000, // Increase timeout to 30 seconds
     socketTimeoutMS: 45000, // Close sockets after 45 seconds
+    bufferMaxEntries: 0, // Disable mongoose buffering
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    ssl: true,
+    tlsAllowInvalidCertificates: true, // Allow invalid certificates for Render
+    retryWrites: true,
+    maxPoolSize: 10, // Maintain up to 10 socket connections
+    serverSelectionTimeoutMS: 5000, // Keep trying to send operations for 5 seconds
+    heartbeatFrequencyMS: 10000, // Send a ping every 10 seconds
 };
 
 mongoose.connect(MONGODB_URI, mongoOptions)
@@ -33,7 +42,24 @@ mongoose.connect(MONGODB_URI, mongoOptions)
     })
     .catch(err => {
         console.error('❌ MongoDB connection error:', err.message);
-        console.log('🔄 Will use local storage fallback for authentication');
+        console.log('🔄 Attempting connection with alternative settings...');
+        
+        // Try alternative connection without SSL verification
+        const fallbackURI = MONGODB_URI.replace('&ssl=true&tlsAllowInvalidCertificates=true', '&ssl=false');
+        return mongoose.connect(fallbackURI, {
+            ...mongoOptions,
+            ssl: false,
+            tlsAllowInvalidCertificates: false
+        });
+    })
+    .then(() => {
+        if (mongoose.connection.readyState === 1) {
+            console.log('✅ Fallback connection successful');
+        }
+    })
+    .catch(err => {
+        console.error('❌ All MongoDB connection attempts failed:', err.message);
+        console.log('⚠️ Server will continue without database - using fallback authentication');
     });
 
 // Handle connection events
@@ -117,6 +143,27 @@ const validateLogin = [
     body('password').notEmpty().withMessage('Password is required')
 ];
 
+// Database connection check middleware
+function checkDatabaseConnection() {
+    return mongoose.connection.readyState === 1;
+}
+
+// Enhanced error handling for database operations
+async function safeDbOperation(operation, fallbackResponse = null) {
+    try {
+        if (!checkDatabaseConnection()) {
+            throw new Error('Database not connected');
+        }
+        return await operation();
+    } catch (error) {
+        console.error('Database operation failed:', error.message);
+        if (fallbackResponse) {
+            return fallbackResponse;
+        }
+        throw error;
+    }
+}
+
 // Routes
 
 // Register
@@ -129,9 +176,19 @@ app.post('/api/auth/register', validateRegistration, async (req, res) => {
 
         const { name, username, email, password } = req.body;
 
+        // Check database connection
+        if (!checkDatabaseConnection()) {
+            return res.status(503).json({ 
+                message: 'Database temporarily unavailable. Please try again later.',
+                error: 'DB_CONNECTION_FAILED'
+            });
+        }
+
         // Check if user exists
-        const existingUser = await User.findOne({
-            $or: [{ email }, { username }]
+        const existingUser = await safeDbOperation(async () => {
+            return await User.findOne({
+                $or: [{ email }, { username }]
+            });
         });
 
         if (existingUser) {
@@ -143,8 +200,10 @@ app.post('/api/auth/register', validateRegistration, async (req, res) => {
         }
 
         // Create user
-        const user = new User({ name, username, email, password });
-        await user.save();
+        const user = await safeDbOperation(async () => {
+            const newUser = new User({ name, username, email, password });
+            return await newUser.save();
+        });
 
         // Generate token
         const token = user.generateAuthToken();
@@ -161,7 +220,19 @@ app.post('/api/auth/register', validateRegistration, async (req, res) => {
         });
     } catch (error) {
         console.error('Registration error:', error);
-        res.status(500).json({ message: 'Server error during registration' });
+        
+        // Handle specific MongoDB errors
+        if (error.message.includes('Database not connected')) {
+            return res.status(503).json({ 
+                message: 'Database connection failed. Please try again later.',
+                error: 'DB_CONNECTION_FAILED'
+            });
+        }
+        
+        res.status(500).json({ 
+            message: 'Server error during registration',
+            error: process.env.NODE_ENV === 'development' ? error.message : 'INTERNAL_ERROR'
+        });
     }
 });
 
@@ -175,9 +246,19 @@ app.post('/api/auth/login', validateLogin, async (req, res) => {
 
         const { identifier, password } = req.body;
 
+        // Check database connection
+        if (!checkDatabaseConnection()) {
+            return res.status(503).json({ 
+                message: 'Database temporarily unavailable. Please try again later.',
+                error: 'DB_CONNECTION_FAILED'
+            });
+        }
+
         // Find user by email or username
-        const user = await User.findOne({
-            $or: [{ email: identifier.toLowerCase() }, { username: identifier.toLowerCase() }]
+        const user = await safeDbOperation(async () => {
+            return await User.findOne({
+                $or: [{ email: identifier.toLowerCase() }, { username: identifier.toLowerCase() }]
+            });
         });
 
         if (!user) {
@@ -205,7 +286,19 @@ app.post('/api/auth/login', validateLogin, async (req, res) => {
         });
     } catch (error) {
         console.error('Login error:', error);
-        res.status(500).json({ message: 'Server error during login' });
+        
+        // Handle specific MongoDB errors
+        if (error.message.includes('Database not connected')) {
+            return res.status(503).json({ 
+                message: 'Database connection failed. Please try again later.',
+                error: 'DB_CONNECTION_FAILED'
+            });
+        }
+        
+        res.status(500).json({ 
+            message: 'Server error during login',
+            error: process.env.NODE_ENV === 'development' ? error.message : 'INTERNAL_ERROR'
+        });
     }
 });
 
