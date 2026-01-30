@@ -27,26 +27,49 @@ console.log('📝 Using MongoDB URI:', MONGODB_URI ? 'URI provided' : 'No URI pr
 console.log('🌐 Environment:', process.env.NODE_ENV || 'development');
 console.log('🔧 Platform:', process.env.RENDER ? 'Render' : 'Local');
 
-// MongoDB connection options - simplified for Render compatibility
+// MongoDB connection options - simplified for maximum compatibility
 const mongoOptions = {
     serverSelectionTimeoutMS: 30000,
-    socketTimeoutMS: 45000,
+    socketTimeoutMS: 30000,
+    connectTimeoutMS: 30000,
     retryWrites: true,
-    maxPoolSize: 10,
+    maxPoolSize: 5,
+    minPoolSize: 1,
+    maxIdleTimeMS: 30000,
     heartbeatFrequencyMS: 10000,
 };
 
-mongoose.connect(MONGODB_URI, mongoOptions)
-    .then(() => {
-        console.log('✅ Successfully connected to MongoDB Atlas');
-        console.log('📊 Database:', mongoose.connection.db.databaseName);
-        console.log('🔗 Connection state:', mongoose.connection.readyState);
-    })
-    .catch(err => {
-        console.error('❌ MongoDB connection error:', err.message);
-        console.log('🔄 Server will continue without database - using fallback authentication');
-        console.log('⚠️ User data will NOT be saved to database until connection is fixed');
-    });
+// Connect to MongoDB with retry logic
+async function connectToMongoDB() {
+    const maxRetries = 3;
+    let retryCount = 0;
+    
+    while (retryCount < maxRetries) {
+        try {
+            console.log(`🔄 Connection attempt ${retryCount + 1}/${maxRetries}`);
+            await mongoose.connect(MONGODB_URI, mongoOptions);
+            console.log('✅ Successfully connected to MongoDB Atlas');
+            console.log('📊 Database:', mongoose.connection.db.databaseName);
+            console.log('🔗 Connection state:', mongoose.connection.readyState);
+            return;
+        } catch (error) {
+            retryCount++;
+            console.error(`❌ Connection attempt ${retryCount} failed:`, error.message);
+            
+            if (retryCount < maxRetries) {
+                console.log(`⏳ Retrying in 5 seconds...`);
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            } else {
+                console.error('❌ All connection attempts failed');
+                console.log('⚠️ Server will continue without database - using fallback authentication');
+                console.log('⚠️ User data will NOT be saved to database until connection is fixed');
+            }
+        }
+    }
+}
+
+// Start connection
+connectToMongoDB();
 
 // Handle connection events
 mongoose.connection.on('connected', () => {
@@ -59,7 +82,23 @@ mongoose.connection.on('error', (err) => {
 
 mongoose.connection.on('disconnected', () => {
     console.log('🟡 Mongoose disconnected from MongoDB Atlas');
+    // Try to reconnect after 10 seconds
+    setTimeout(() => {
+        console.log('🔄 Attempting to reconnect...');
+        connectToMongoDB();
+    }, 10000);
 });
+
+// Periodic connection check
+setInterval(() => {
+    const state = mongoose.connection.readyState;
+    console.log('📊 Database connection check - State:', state, state === 1 ? '(Connected)' : '(Disconnected)');
+    
+    if (state === 0) { // Disconnected
+        console.log('🔄 Database disconnected, attempting reconnection...');
+        connectToMongoDB();
+    }
+}, 60000); // Check every minute
 
 // User Schema
 const userSchema = new mongoose.Schema({
@@ -203,6 +242,12 @@ app.post('/api/auth/register', validateRegistration, async (req, res) => {
 
         console.log('🔄 Registration attempt for:', email);
         console.log('📊 Database connection state:', mongoose.connection.readyState);
+        
+        // If database is disconnected, try to reconnect
+        if (mongoose.connection.readyState === 0) {
+            console.log('🔄 Database disconnected, attempting reconnection...');
+            await connectToMongoDB();
+        }
 
         // Try to check if user exists (with timeout)
         let existingUser = null;
