@@ -15,24 +15,19 @@ app.use(express.json());
 app.use(cors());
 
 // MongoDB Connection - Use cloud database with SSL configuration
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://krish321epsi_db_user:123456789kishore@cluster0.x4udcsa.mongodb.net/fadestack?retryWrites=true&w=majority&ssl=true&tlsAllowInvalidCertificates=true';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://krish321epsi_db_user:123456789kishore@cluster0.x4udcsa.mongodb.net/fadestack?retryWrites=true&w=majority';
 
 console.log('🔗 Connecting to MongoDB Atlas...');
 console.log('📝 Using MongoDB URI:', MONGODB_URI ? 'Connected' : 'No URI provided');
 
 // MongoDB connection options with SSL configuration
 const mongoOptions = {
-    serverSelectionTimeoutMS: 30000, // Increase timeout to 30 seconds
-    socketTimeoutMS: 45000, // Close sockets after 45 seconds
-    bufferMaxEntries: 0, // Disable mongoose buffering
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-    ssl: true,
-    tlsAllowInvalidCertificates: true, // Allow invalid certificates for Render
+    serverSelectionTimeoutMS: 30000,
+    socketTimeoutMS: 45000,
+    bufferMaxEntries: 0,
     retryWrites: true,
-    maxPoolSize: 10, // Maintain up to 10 socket connections
-    serverSelectionTimeoutMS: 5000, // Keep trying to send operations for 5 seconds
-    heartbeatFrequencyMS: 10000, // Send a ping every 10 seconds
+    maxPoolSize: 10,
+    heartbeatFrequencyMS: 10000,
 };
 
 mongoose.connect(MONGODB_URI, mongoOptions)
@@ -42,24 +37,7 @@ mongoose.connect(MONGODB_URI, mongoOptions)
     })
     .catch(err => {
         console.error('❌ MongoDB connection error:', err.message);
-        console.log('🔄 Attempting connection with alternative settings...');
-        
-        // Try alternative connection without SSL verification
-        const fallbackURI = MONGODB_URI.replace('&ssl=true&tlsAllowInvalidCertificates=true', '&ssl=false');
-        return mongoose.connect(fallbackURI, {
-            ...mongoOptions,
-            ssl: false,
-            tlsAllowInvalidCertificates: false
-        });
-    })
-    .then(() => {
-        if (mongoose.connection.readyState === 1) {
-            console.log('✅ Fallback connection successful');
-        }
-    })
-    .catch(err => {
-        console.error('❌ All MongoDB connection attempts failed:', err.message);
-        console.log('⚠️ Server will continue without database - using fallback authentication');
+        console.log('🔄 Server will continue without database - using fallback authentication');
     });
 
 // Handle connection events
