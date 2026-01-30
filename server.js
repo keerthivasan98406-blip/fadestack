@@ -14,17 +14,17 @@ const JWT_SECRET = process.env.JWT_SECRET || 'fadestack-secret-key-2024';
 app.use(express.json());
 app.use(cors());
 
-// MongoDB Connection - Use cloud database with SSL configuration
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://krish321epsi_db_user:123456789kishore@cluster0.x4udcsa.mongodb.net/fadestack?retryWrites=true&w=majority';
+// MongoDB Connection - Use cloud database with Render-compatible settings
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://krish321epsi_db_user:123456789kishore@cluster0.x4udcsa.mongodb.net/fadestack?retryWrites=true&w=majority&appName=fadestack';
 
 console.log('🔗 Connecting to MongoDB Atlas...');
-console.log('📝 Using MongoDB URI:', MONGODB_URI ? 'Connected' : 'No URI provided');
+console.log('📝 Using MongoDB URI:', MONGODB_URI ? 'URI provided' : 'No URI provided');
+console.log('🌐 Environment:', process.env.NODE_ENV || 'development');
 
-// MongoDB connection options with SSL configuration
+// MongoDB connection options - simplified for Render compatibility
 const mongoOptions = {
     serverSelectionTimeoutMS: 30000,
     socketTimeoutMS: 45000,
-    bufferMaxEntries: 0,
     retryWrites: true,
     maxPoolSize: 10,
     heartbeatFrequencyMS: 10000,
@@ -34,10 +34,12 @@ mongoose.connect(MONGODB_URI, mongoOptions)
     .then(() => {
         console.log('✅ Successfully connected to MongoDB Atlas');
         console.log('📊 Database:', mongoose.connection.db.databaseName);
+        console.log('🔗 Connection state:', mongoose.connection.readyState);
     })
     .catch(err => {
         console.error('❌ MongoDB connection error:', err.message);
         console.log('🔄 Server will continue without database - using fallback authentication');
+        console.log('⚠️ User data will NOT be saved to database until connection is fixed');
     });
 
 // Handle connection events
@@ -130,6 +132,7 @@ function checkDatabaseConnection() {
 async function safeDbOperation(operation, fallbackResponse = null) {
     try {
         if (!checkDatabaseConnection()) {
+            console.log('⚠️ Database not connected, operation will fail');
             throw new Error('Database not connected');
         }
         return await operation();
