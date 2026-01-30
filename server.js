@@ -272,34 +272,6 @@ app.post('/api/auth/register', validateRegistration, async (req, res) => {
     }
 });
 
-        res.status(201).json({
-            message: 'Account created successfully!',
-            token,
-            user: {
-                id: user._id,
-                name: user.name,
-                username: user.username,
-                email: user.email
-            }
-        });
-    } catch (error) {
-        console.error('Registration error:', error);
-        
-        // Handle specific MongoDB errors
-        if (error.message.includes('Database not connected')) {
-            return res.status(503).json({ 
-                message: 'Database connection failed. Please try again later.',
-                error: 'DB_CONNECTION_FAILED'
-            });
-        }
-        
-        res.status(500).json({ 
-            message: 'Server error during registration',
-            error: process.env.NODE_ENV === 'development' ? error.message : 'INTERNAL_ERROR'
-        });
-    }
-});
-
 // Login
 app.post('/api/auth/login', validateLogin, async (req, res) => {
     try {
