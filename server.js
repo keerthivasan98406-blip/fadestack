@@ -13,7 +13,6 @@ const JWT_SECRET = process.env.JWT_SECRET || 'fadestack-secret-key-2024';
 // Middleware
 app.use(express.json());
 app.use(cors());
-app.use(express.static(__dirname));
 
 // MongoDB Connection - Use cloud database
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://krish321epsi_db_user:123456789kishore@cluster0.x4udcsa.mongodb.net/fadestack?retryWrites=true&w=majority';
@@ -270,6 +269,9 @@ app.get('/', (req, res) => {
 app.get('/app', (req, res) => {
     res.sendFile(__dirname + '/index.html');
 });
+
+// Serve static files (CSS, JS, images)
+app.use(express.static(__dirname));
 
 // Serve static files and other routes
 app.get('*', (req, res) => {
