@@ -19,6 +19,7 @@ app.use(express.static(__dirname));
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://krish321epsi_db_user:123456789kishore@cluster0.x4udcsa.mongodb.net/fadestack?retryWrites=true&w=majority';
 
 console.log('🔗 Connecting to MongoDB Atlas...');
+console.log('📝 Using MongoDB URI:', MONGODB_URI ? 'Connected' : 'No URI provided');
 
 // MongoDB connection options
 const mongoOptions = {
