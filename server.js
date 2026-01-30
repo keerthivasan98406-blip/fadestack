@@ -17,17 +17,18 @@ app.use(cors());
 // MongoDB Connection - Use cloud database with multiple fallback options
 let MONGODB_URI = process.env.MONGODB_URI;
 
-// If no environment variable, try different connection strings for Render compatibility
-if (!MONGODB_URI) {
-    MONGODB_URI = 'mongodb+srv://krish321epsi_db_user:123456789kishore@cluster0.x4udcsa.mongodb.net/fadestack?retryWrites=true&w=majority&ssl=false&authSource=admin';
+// If no environment variable or if on Render, use SSL-disabled connection
+if (!MONGODB_URI || process.env.RENDER) {
+    // For Render, use connection without SSL to avoid TLS errors
+    MONGODB_URI = 'mongodb+srv://krish321epsi_db_user:123456789kishore@cluster0.x4udcsa.mongodb.net/fadestack?retryWrites=true&w=majority&ssl=false&authSource=admin&appName=fadestack-render';
 }
 
-console.log('🔗 Connecting to MongoDB Atlas...');
+console.log('� Conne cting to MongoDB Atlas...');
 console.log('📝 Using MongoDB URI:', MONGODB_URI ? 'URI provided' : 'No URI provided');
 console.log('🌐 Environment:', process.env.NODE_ENV || 'development');
 console.log('🔧 Platform:', process.env.RENDER ? 'Render' : 'Local');
 
-// MongoDB connection options - simplified for maximum compatibility
+// MongoDB connection options - optimized for Render
 const mongoOptions = {
     serverSelectionTimeoutMS: 30000,
     socketTimeoutMS: 30000,
@@ -37,35 +38,51 @@ const mongoOptions = {
     minPoolSize: 1,
     maxIdleTimeMS: 30000,
     heartbeatFrequencyMS: 10000,
+    // Disable SSL for Render compatibility
+    ssl: false,
+    tls: false,
 };
 
-// Connect to MongoDB with retry logic
+// Connect to MongoDB with retry logic and fallback connections
 async function connectToMongoDB() {
-    const maxRetries = 3;
-    let retryCount = 0;
+    const connectionStrings = [
+        // Primary connection (SSL disabled for Render)
+        MONGODB_URI,
+        // Fallback 1: Direct connection without SRV
+        'mongodb://krish321epsi_db_user:123456789kishore@ac-gm1gbvp-shard-00-00.x4udcsa.mongodb.net:27017,ac-gm1gbvp-shard-00-01.x4udcsa.mongodb.net:27017,ac-gm1gbvp-shard-00-02.x4udcsa.mongodb.net:27017/fadestack?ssl=false&replicaSet=atlas-1f75wg-shard-0&authSource=admin&retryWrites=true&w=majority',
+        // Fallback 2: Single server connection
+        'mongodb://krish321epsi_db_user:123456789kishore@ac-gm1gbvp-shard-00-00.x4udcsa.mongodb.net:27017/fadestack?ssl=false&authSource=admin'
+    ];
     
-    while (retryCount < maxRetries) {
+    for (let i = 0; i < connectionStrings.length; i++) {
+        const uri = connectionStrings[i];
+        console.log(`🔄 Trying connection method ${i + 1}/${connectionStrings.length}`);
+        
         try {
-            console.log(`🔄 Connection attempt ${retryCount + 1}/${maxRetries}`);
-            await mongoose.connect(MONGODB_URI, mongoOptions);
-            console.log('✅ Successfully connected to MongoDB Atlas');
-            console.log('📊 Database:', mongoose.connection.db.databaseName);
-            console.log('🔗 Connection state:', mongoose.connection.readyState);
-            return;
-        } catch (error) {
-            retryCount++;
-            console.error(`❌ Connection attempt ${retryCount} failed:`, error.message);
+            await mongoose.connect(uri, mongoOptions);
             
-            if (retryCount < maxRetries) {
-                console.log(`⏳ Retrying in 5 seconds...`);
-                await new Promise(resolve => setTimeout(resolve, 5000));
-            } else {
-                console.error('❌ All connection attempts failed');
-                console.log('⚠️ Server will continue without database - using fallback authentication');
-                console.log('⚠️ User data will NOT be saved to database until connection is fixed');
+            // Wait for connection to be fully established
+            if (mongoose.connection.readyState === 1) {
+                console.log('✅ Successfully connected to MongoDB Atlas');
+                if (mongoose.connection.db) {
+                    console.log('📊 Database:', mongoose.connection.db.databaseName);
+                }
+                console.log('🔗 Connection state:', mongoose.connection.readyState);
+                return;
+            }
+        } catch (error) {
+            console.error(`❌ Connection method ${i + 1} failed:`, error.message);
+            
+            if (i < connectionStrings.length - 1) {
+                console.log(`⏳ Trying next connection method...`);
+                await new Promise(resolve => setTimeout(resolve, 2000));
             }
         }
     }
+    
+    console.error('❌ All connection methods failed');
+    console.log('⚠️ Server will continue without database - using fallback authentication');
+    console.log('⚠️ User data will NOT be saved to database until connection is fixed');
 }
 
 // Start connection
